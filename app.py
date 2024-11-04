@@ -37,7 +37,7 @@ try:
             if time_elapsed > timedelta(minutes=5):
                 disconnect_ssh()
                 st.error("Session timed out after 5 minutes of inactivity. Please reconnect.")
-                st.rerun()  # Changed from experimental_rerun to rerun
+                st.rerun()
 
     # Helper function to establish SSH connection
     def establish_ssh_connection(host, username, key_data):
@@ -99,6 +99,36 @@ try:
         try:
             # Update last activity timestamp
             st.session_state.last_activity = datetime.now()
+            
+            # If command requires network interface info, get it first
+            if any(cmd in command.lower() for cmd in ['tcpdump', 'wireshark', 'tshark', 'iftop']):
+                # Get list of interfaces
+                stdin, stdout, stderr = st.session_state.ssh_client.exec_command('ip link show')
+                interfaces_output = stdout.read().decode()
+                
+                # Parse interfaces
+                interfaces = []
+                for line in interfaces_output.split('\n'):
+                    if ':' in line and '@' not in line:  # Skip virtual interfaces
+                        interface = line.split(':')[1].strip()
+                        interfaces.append(interface)
+                
+                if not interfaces:
+                    return "No network interfaces found"
+                
+                # Replace generic interface names with actual interface
+                for interface in interfaces:
+                    if 'eth0' in command:
+                        command = command.replace('eth0', interface)
+                        break
+                    elif 'enx' in interface.lower() or 'eth' in interface.lower():
+                        # Prefer enx or eth interfaces if available
+                        command = command.replace('eth0', interface)
+                        break
+                    else:
+                        # Use the first available interface if no preferred interface found
+                        command = command.replace('eth0', interfaces[0])
+                        break
             
             # Execute command
             stdin, stdout, stderr = st.session_state.ssh_client.exec_command(command)
@@ -198,7 +228,7 @@ try:
                         }
                         
                         st.success("Successfully connected!")
-                        st.rerun()  # Changed from experimental_rerun to rerun
+                        st.rerun()
                         
                     except Exception as e:
                         st.error(f"Connection failed: {str(e)}")
@@ -206,7 +236,7 @@ try:
             st.success(f"Connected to: {st.session_state.connection_info['host']}")
             if st.button("Disconnect"):
                 disconnect_ssh()
-                st.rerun()  # Changed from experimental_rerun to rerun
+                st.rerun()
             
             # Show session timeout info
             if st.session_state.connected:
@@ -237,7 +267,7 @@ try:
             
             if not st.session_state.connected:
                 st.error("Session expired. Please reconnect.")
-                st.rerun()  # Changed from experimental_rerun to rerun
+                st.rerun()
             
             # Append user message to chat history
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -249,9 +279,18 @@ try:
             try:
                 # Get OpenAI's interpretation of the command using the new API format
                 system_prompt = """You are a network administrator, proficient in Linux based systems. 
-                Convert the user's request into appropriate Linux commands. 
+                Convert the user's request into appropriate Linux commands.
                 For commands that require elevated privileges, prefix them with 'sudo'.
                 For system monitoring commands like 'top', add the '-b -n 1' flags to ensure batch output.
+                For network monitoring commands like tcpdump:
+                - Use 'eth0' in the command (the application will automatically replace it with the correct interface)
+                - Always add appropriate flags for better output (-n for no DNS resolution, -v for verbose)
+                - For packet captures, limit the capture to avoid overwhelming output
+                Example: 'sudo tcpdump -i eth0 -n -v -c 50'
+                When checking system status or resources:
+                - For CPU/memory: use 'top -b -n 1'
+                - For disk space: use 'df -h'
+                - For network interfaces: use 'ip link show'
                 Respond with ONLY the command, no explanations."""
                 
                 response = openai.chat.completions.create(
