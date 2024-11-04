@@ -10,6 +10,9 @@ import os
 # Configure page settings
 st.set_page_config(page_title="Linux Admin Assistant", layout="wide")
 
+# Set OpenAI API key from Streamlit secrets
+openai.api_key = st.secrets["OPENAI_API_KEY"]
+
 # Initialize session states
 if 'messages' not in st.session_state:
     st.session_state.messages = []
@@ -22,9 +25,6 @@ if 'connected' not in st.session_state:
 with st.sidebar:
     st.title("Configuration")
     
-# Set OpenAI API key
-openai.api_key = st.secrets["OPENAI_API_KEY"]
-
     # SSH Connection Configuration
     st.subheader("SSH Connection")
     host = st.text_input("Host IP")
@@ -107,7 +107,7 @@ else:
     st.warning("Not connected to server. Please configure connection in sidebar.")
 
 # Chat interface
-if openai_api_key and st.session_state.connected:
+if st.session_state.connected:
     # Display chat messages
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
@@ -167,10 +167,7 @@ if openai_api_key and st.session_state.connected:
                 st.plotly_chart(visualization)
 
 else:
-    if not openai_api_key:
-        st.warning("Please enter your OpenAI API key in the sidebar.")
-    if not st.session_state.connected:
-        st.warning("Please configure and establish SSH connection in the sidebar.")
+    st.warning("Please configure and establish SSH connection in the sidebar.")
 
 # Cleanup connection when app is closed
 def cleanup():
