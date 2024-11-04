@@ -57,7 +57,7 @@ try:
             return None
 
     # Main chat interface
-    st.title("Linux Admin Assistant")
+    st.title("AI based Linux Admin Assistant")
 
     # Sidebar for configuration
     with st.sidebar:
