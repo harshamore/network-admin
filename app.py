@@ -5,7 +5,6 @@ import pandas as pd
 import plotly.express as px
 from io import StringIO
 import os
-import time
 from datetime import datetime, timedelta
 
 try:
@@ -230,13 +229,13 @@ try:
                 st.markdown(prompt)
             
             try:
-                # Get OpenAI's interpretation of the command
+                # Get OpenAI's interpretation of the command using the new API format
                 system_prompt = """You are a network administrator, proficient in Linux based systems. 
                 Convert the user's request into appropriate Linux commands. 
                 Respond with ONLY the command, no explanations."""
                 
-                response = openai.ChatCompletion.create(
-                    model="gpt-4-0-mini",
+                response = openai.chat.completions.create(
+                    model="gpt-4",  # or your preferred model
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
