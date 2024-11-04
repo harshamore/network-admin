@@ -37,7 +37,7 @@ try:
             if time_elapsed > timedelta(minutes=5):
                 disconnect_ssh()
                 st.error("Session timed out after 5 minutes of inactivity. Please reconnect.")
-                st.experimental_rerun()
+                st.rerun()  # Changed from experimental_rerun to rerun
 
     # Helper function to establish SSH connection
     def establish_ssh_connection(host, username, key_data):
@@ -124,12 +124,30 @@ try:
     # Helper function to process commands that might need visualization
     def process_and_visualize_command(command, output):
         try:
-            # Check if output is system metrics
-            if "top" in command or "ps" in command:
+            # Check if output is system metrics from top command
+            if "top" in command:
+                # Parse top output into a more structured format
                 lines = output.strip().split('\n')
-                if len(lines) > 1:
-                    df = pd.read_csv(StringIO(output), delim_whitespace=True)
-                    fig = px.bar(df, x=df.columns[0], y=df.columns[1])
+                processes = []
+                header_found = False
+                
+                for line in lines:
+                    if 'PID' in line and 'CPU' in line:
+                        header_found = True
+                        continue
+                    if header_found and line.strip():
+                        parts = line.split()
+                        if len(parts) >= 12:  # Ensure we have enough columns
+                            processes.append({
+                                'PID': parts[0],
+                                'CPU%': float(parts[8]) if parts[8].replace('.','').isdigit() else 0,
+                                'Command': parts[11]
+                            })
+                
+                if processes:
+                    df = pd.DataFrame(processes)
+                    df = df.nlargest(10, 'CPU%')  # Show top 10 processes
+                    fig = px.bar(df, x='Command', y='CPU%', title='Top CPU Usage by Process')
                     return fig
             
             # Check if output is disk usage
@@ -137,7 +155,7 @@ try:
                 lines = output.strip().split('\n')
                 if len(lines) > 1:
                     df = pd.read_csv(StringIO(output), delim_whitespace=True)
-                    fig = px.pie(df, values='Use%', names='Filesystem')
+                    fig = px.pie(df, values='Use%', names='Filesystem', title='Disk Usage')
                     return fig
                     
             return None
@@ -180,7 +198,7 @@ try:
                         }
                         
                         st.success("Successfully connected!")
-                        st.experimental_rerun()
+                        st.rerun()  # Changed from experimental_rerun to rerun
                         
                     except Exception as e:
                         st.error(f"Connection failed: {str(e)}")
@@ -188,7 +206,7 @@ try:
             st.success(f"Connected to: {st.session_state.connection_info['host']}")
             if st.button("Disconnect"):
                 disconnect_ssh()
-                st.experimental_rerun()
+                st.rerun()  # Changed from experimental_rerun to rerun
             
             # Show session timeout info
             if st.session_state.connected:
@@ -219,7 +237,7 @@ try:
             
             if not st.session_state.connected:
                 st.error("Session expired. Please reconnect.")
-                st.experimental_rerun()
+                st.rerun()  # Changed from experimental_rerun to rerun
             
             # Append user message to chat history
             st.session_state.messages.append({"role": "user", "content": prompt})
@@ -232,6 +250,8 @@ try:
                 # Get OpenAI's interpretation of the command using the new API format
                 system_prompt = """You are a network administrator, proficient in Linux based systems. 
                 Convert the user's request into appropriate Linux commands. 
+                For commands that require elevated privileges, prefix them with 'sudo'.
+                For system monitoring commands like 'top', add the '-b -n 1' flags to ensure batch output.
                 Respond with ONLY the command, no explanations."""
                 
                 response = openai.chat.completions.create(
