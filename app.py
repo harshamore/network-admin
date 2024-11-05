@@ -29,22 +29,114 @@ try:
             'username': '',
             'key_data': None
         }
-    if 'chart_counter' not in st.session_state:
-        st.session_state.chart_counter = 0
 
-    # Helper function to get unique chart key
-    def get_unique_chart_key():
-        st.session_state.chart_counter += 1
-        return f"chart_{st.session_state.chart_counter}"
+    # Helper functions remain unchanged
+    def check_timeout():
+        if st.session_state.connected:
+            time_elapsed = datetime.now() - st.session_state.last_activity
+            if time_elapsed > timedelta(minutes=5):
+                disconnect_ssh()
+                st.error("Session timed out after 5 minutes of inactivity. Please reconnect.")
+                st.rerun()
 
-    # [Previous helper functions remain the same until process_and_visualize_command]
+    def establish_ssh_connection(host, username, key_data):
+        try:
+            key_path = "temp_key.pem"
+            with open(key_path, "wb") as f:
+                f.write(key_data)
+            os.chmod(key_path, 0o600)
 
-    # Helper function to process commands that might need visualization
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            private_key = paramiko.RSAKey(filename=key_path)
+            ssh.connect(hostname=host, username=username, pkey=private_key)
+            
+            os.remove(key_path)
+            
+            return ssh
+        except Exception as e:
+            if os.path.exists(key_path):
+                os.remove(key_path)
+            raise e
+
+    def disconnect_ssh():
+        if st.session_state.ssh_client:
+            st.session_state.ssh_client.close()
+        st.session_state.ssh_client = None
+        st.session_state.connected = False
+        st.session_state.connection_info = {
+            'host': '',
+            'username': '',
+            'key_data': None
+        }
+
+    def execute_ssh_command(command):
+        check_timeout()
+        
+        if not st.session_state.ssh_client:
+            try:
+                if all(st.session_state.connection_info.values()):
+                    st.session_state.ssh_client = establish_ssh_connection(
+                        st.session_state.connection_info['host'],
+                        st.session_state.connection_info['username'],
+                        st.session_state.connection_info['key_data']
+                    )
+                    st.session_state.connected = True
+                else:
+                    return "Not connected to SSH server"
+            except Exception as e:
+                return f"Connection error: {str(e)}"
+
+        try:
+            st.session_state.last_activity = datetime.now()
+            
+            if any(cmd in command.lower() for cmd in ['tcpdump', 'wireshark', 'tshark', 'iftop']):
+                stdin, stdout, stderr = st.session_state.ssh_client.exec_command('ip link show')
+                interfaces_output = stdout.read().decode()
+                
+                interfaces = []
+                for line in interfaces_output.split('\n'):
+                    if ':' in line and '@' not in line:
+                        interface = line.split(':')[1].strip()
+                        interfaces.append(interface)
+                
+                if not interfaces:
+                    return "No network interfaces found"
+                
+                for interface in interfaces:
+                    if 'eth0' in command:
+                        command = command.replace('eth0', interface)
+                        break
+                    elif 'enx' in interface.lower() or 'eth' in interface.lower():
+                        command = command.replace('eth0', interface)
+                        break
+                    else:
+                        command = command.replace('eth0', interfaces[0])
+                        break
+            
+            stdin, stdout, stderr = st.session_state.ssh_client.exec_command(command)
+            output = stdout.read().decode()
+            error = stderr.read().decode()
+            
+            return output if output else error
+        except Exception as e:
+            try:
+                st.session_state.ssh_client = establish_ssh_connection(
+                    st.session_state.connection_info['host'],
+                    st.session_state.connection_info['username'],
+                    st.session_state.connection_info['key_data']
+                )
+                stdin, stdout, stderr = st.session_state.ssh_client.exec_command(command)
+                output = stdout.read().decode()
+                error = stderr.read().decode()
+                return output if output else error
+            except Exception as e:
+                return f"Command execution error: {str(e)}"
+
     def process_and_visualize_command(command, output):
         try:
-            # Check if output is system metrics from top command
             if "top" in command:
-                # Parse top output into a more structured format
                 lines = output.strip().split('\n')
                 processes = []
                 header_found = False
@@ -55,7 +147,7 @@ try:
                         continue
                     if header_found and line.strip():
                         parts = line.split()
-                        if len(parts) >= 12:  # Ensure we have enough columns
+                        if len(parts) >= 12:
                             processes.append({
                                 'PID': parts[0],
                                 'CPU%': float(parts[8]) if parts[8].replace('.','').isdigit() else 0,
@@ -64,63 +156,122 @@ try:
                 
                 if processes:
                     df = pd.DataFrame(processes)
-                    df = df.nlargest(10, 'CPU%')  # Show top 10 processes
+                    df = df.nlargest(10, 'CPU%')
                     fig = px.bar(df, x='Command', y='CPU%', title='Top CPU Usage by Process')
-                    return {'fig': fig, 'type': 'cpu_usage'}
+                    return fig
             
-            # Check if output is disk usage
             elif "df" in command:
                 lines = output.strip().split('\n')
                 if len(lines) > 1:
                     df = pd.read_csv(StringIO(output), delim_whitespace=True)
                     fig = px.pie(df, values='Use%', names='Filesystem', title='Disk Usage')
-                    return {'fig': fig, 'type': 'disk_usage'}
+                    return fig
                     
             return None
         except Exception as e:
             st.warning(f"Visualization error: {str(e)}")
             return None
 
-    # [Previous code remains the same until the chat interface section]
+    # Main chat interface
+    st.title("Linux Admin Assistant")
 
-    # Chat interface
+    # Sidebar for configuration
+    with st.sidebar:
+        st.title("Configuration")
+        
+        if not st.session_state.connected:
+            st.subheader("SSH Connection")
+            host = st.text_input("Host IP")
+            username = st.text_input("Username")
+            
+            uploaded_file = st.file_uploader("Upload SSH Private Key", type=['pem', 'key'])
+            
+            if uploaded_file is not None and host and username:
+                key_data = uploaded_file.getvalue()
+                
+                if st.button("Connect"):
+                    try:
+                        ssh = establish_ssh_connection(host, username, key_data)
+                        
+                        st.session_state.ssh_client = ssh
+                        st.session_state.connected = True
+                        st.session_state.last_activity = datetime.now()
+                        st.session_state.connection_info = {
+                            'host': host,
+                            'username': username,
+                            'key_data': key_data
+                        }
+                        
+                        st.success("Successfully connected!")
+                        st.rerun()
+                        
+                    except Exception as e:
+                        st.error(f"Connection failed: {str(e)}")
+        else:
+            st.success(f"Connected to: {st.session_state.connection_info['host']}")
+            if st.button("Disconnect"):
+                disconnect_ssh()
+                st.rerun()
+            
+            if st.session_state.connected:
+                time_remaining = 5 - (datetime.now() - st.session_state.last_activity).total_seconds() / 60
+                st.info(f"Session timeout in: {time_remaining:.1f} minutes")
+
     if st.session_state.connected:
-        # Display chat messages
+        st.success(f"Connected to {st.session_state.connection_info['host']}")
+    else:
+        st.info("Please configure SSH connection in the sidebar.")
+
+    if st.session_state.connected:
         for idx, message in enumerate(st.session_state.messages):
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
-                
-                # If there's a visualization, display it with a unique key
                 if "visualization" in message:
-                    st.plotly_chart(message["visualization"]["fig"], 
-                                  key=f"{message['visualization']['type']}_{idx}")
+                    st.plotly_chart(message["visualization"], key=f"chart_{idx}")
 
-        # Chat input
         if prompt := st.chat_input("What would you like to do?"):
-            # Check timeout before processing
             check_timeout()
             
             if not st.session_state.connected:
                 st.error("Session expired. Please reconnect.")
                 st.rerun()
             
-            # Append user message to chat history
             st.session_state.messages.append({"role": "user", "content": prompt})
             
-            # Display user message
             with st.chat_message("user"):
                 st.markdown(prompt)
             
             try:
-                # [OpenAI API call and command execution remain the same]
+                system_prompt = """You are a network administrator, proficient in Linux based systems. 
+                Convert the user's request into appropriate Linux commands.
+                For commands that require elevated privileges, prefix them with 'sudo'.
+                For system monitoring commands like 'top', add the '-b -n 1' flags to ensure batch output.
+                For network monitoring commands like tcpdump:
+                - Use 'eth0' in the command (the application will automatically replace it with the correct interface)
+                - Always add appropriate flags for better output (-n for no DNS resolution, -v for verbose)
+                - For packet captures, limit the capture to avoid overwhelming output
+                Example: 'sudo tcpdump -i eth0 -n -v -c 50'
+                When checking system status or resources:
+                - For CPU/memory: use 'top -b -n 1'
+                - For disk space: use 'df -h'
+                - For network interfaces: use 'ip link show'
+                Respond with ONLY the command, no explanations."""
                 
-                # Check if output can be visualized
+                response = openai.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+                
+                command = response.choices[0].message.content.strip()
+                output = execute_ssh_command(command)
+                st.session_state.last_activity = datetime.now()
+                
                 visualization = process_and_visualize_command(command, output)
-                
-                # Create assistant's response
                 response_content = f"Command executed: `{command}`\n\nOutput:\n```\n{output}\n```"
                 
-                # Append assistant message to chat history
                 assistant_message = {
                     "role": "assistant",
                     "content": response_content
@@ -130,12 +281,10 @@ try:
                     
                 st.session_state.messages.append(assistant_message)
                 
-                # Display assistant message
                 with st.chat_message("assistant"):
                     st.markdown(response_content)
                     if visualization:
-                        st.plotly_chart(visualization["fig"], 
-                                      key=f"{visualization['type']}_{len(st.session_state.messages)-1}")
+                        st.plotly_chart(visualization, key=f"chart_{len(st.session_state.messages)-1}")
 
             except Exception as e:
                 st.error(f"Error processing request: {str(e)}")
