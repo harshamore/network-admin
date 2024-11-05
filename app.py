@@ -143,7 +143,7 @@ def process_and_visualize_command(command, output):
         return None
 
 # Initialize Streamlit page and session states
-st.set_page_config(page_title="Linux Admin Assistant", layout="wide")
+st.set_page_config(page_title="Cloud system Assistant", layout="wide")
 
 # Set OpenAI API key from Streamlit secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
@@ -165,7 +165,7 @@ if 'connection_info' not in st.session_state:
     }
 
 # Main title
-st.title("Linux Admin Assistant")
+st.title("Cloud system Assistant")
 
 # Sidebar for SSH configuration
 with st.sidebar:
