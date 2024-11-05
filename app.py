@@ -208,5 +208,5 @@ if st.session_state.connected:
             
             # Execute and display results as before
             # [Rest of the execution code remains the same]
-
-# [Rest of the application code remains the same]
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
