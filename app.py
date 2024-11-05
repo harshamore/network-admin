@@ -50,6 +50,47 @@ def check_timeout():
             st.error("Session timed out after 5 minutes of inactivity. Please reconnect.")
             st.rerun()
 
+def execute_ssh_command(command):
+    """Execute SSH command and return output"""
+    check_timeout()
+    
+    if not st.session_state.ssh_client:
+        try:
+            if all(st.session_state.connection_info.values()):
+                st.session_state.ssh_client = establish_ssh_connection(
+                    st.session_state.connection_info['host'],
+                    st.session_state.connection_info['username'],
+                    st.session_state.connection_info['key_data']
+                )
+                st.session_state.connected = True
+            else:
+                return "Not connected to SSH server"
+        except Exception as e:
+            return f"Connection error: {str(e)}"
+
+    try:
+        st.session_state.last_activity = datetime.now()
+        
+        if any(cmd in command.lower() for cmd in ['tcpdump', 'wireshark', 'tshark', 'iftop']):
+            stdin, stdout, stderr = st.session_state.ssh_client.exec_command('ip link show')
+            interfaces_output = stdout.read().decode()
+            
+            interfaces = []
+            for line in interfaces_output.split('\n'):
+                if ':' in line and '@' not in line:
+                    interface = line.split(':')[1].strip()
+                    interfaces.append(interface)
+            
+            if not interfaces:
+                return "No network interfaces found"
+            
+        stdin, stdout, stderr = st.session_state.ssh_client.exec_command(command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+        
+        return output if output else error
+    except Exception as e:
+        return f"Command execution error: {str(e)}"
 
 def process_and_visualize_command(command, output):
     """Process command output and create visualization if applicable"""
