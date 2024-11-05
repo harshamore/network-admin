@@ -9,144 +9,144 @@ from datetime import datetime, timedelta
 
 # [Previous imports and initial setup remain the same]
 
-    # Enhance session state to include system information
-    if 'system_info' not in st.session_state:
-        st.session_state.system_info = {
-            'network_interfaces': [],
-            'os_version': '',
-            'cpu_info': '',
-            'memory_total': '',
-            'disk_devices': [],
-            'package_manager': '',
-            'init_system': '',
-            'kernel_version': '',
-            'available_commands': []
+# Enhance session state to include system information
+if 'system_info' not in st.session_state:
+    st.session_state.system_info = {
+        'network_interfaces': [],
+        'os_version': '',
+        'cpu_info': '',
+        'memory_total': '',
+        'disk_devices': [],
+        'package_manager': '',
+        'init_system': '',
+        'kernel_version': '',
+        'available_commands': []
+    }
+
+def get_system_info(ssh_client):
+    """Gather comprehensive system information"""
+    system_info = {}
+    
+    try:
+        # Get network interfaces
+        stdin, stdout, stderr = ssh_client.exec_command('ip link show')
+        output = stdout.read().decode()
+        interfaces = []
+        for line in output.split('\n'):
+            if ':' in line and '@' not in line:
+                interface = line.split(':')[1].strip()
+                interfaces.append(interface)
+        system_info['network_interfaces'] = interfaces
+
+        # Get OS version
+        stdin, stdout, stderr = ssh_client.exec_command('cat /etc/os-release')
+        os_info = stdout.read().decode()
+        system_info['os_version'] = os_info
+
+        # Get CPU info
+        stdin, stdout, stderr = ssh_client.exec_command('lscpu')
+        cpu_info = stdout.read().decode()
+        system_info['cpu_info'] = cpu_info
+
+        # Get memory info
+        stdin, stdout, stderr = ssh_client.exec_command('free -h')
+        memory_info = stdout.read().decode()
+        system_info['memory_total'] = memory_info
+
+        # Get disk devices
+        stdin, stdout, stderr = ssh_client.exec_command('lsblk')
+        disk_info = stdout.read().decode()
+        system_info['disk_devices'] = disk_info
+
+        # Determine package manager
+        package_managers = {
+            'apt': 'apt-get -v',
+            'dnf': 'dnf --version',
+            'yum': 'yum --version',
+            'pacman': 'pacman --version',
+            'zypper': 'zypper --version'
         }
-
-    def get_system_info(ssh_client):
-        """Gather comprehensive system information"""
-        system_info = {}
         
-        try:
-            # Get network interfaces
-            stdin, stdout, stderr = ssh_client.exec_command('ip link show')
-            output = stdout.read().decode()
-            interfaces = []
-            for line in output.split('\n'):
-                if ':' in line and '@' not in line:
-                    interface = line.split(':')[1].strip()
-                    interfaces.append(interface)
-            system_info['network_interfaces'] = interfaces
+        for pm, cmd in package_managers.items():
+            stdin, stdout, stderr = ssh_client.exec_command(cmd)
+            if stdout.read():
+                system_info['package_manager'] = pm
+                break
 
-            # Get OS version
-            stdin, stdout, stderr = ssh_client.exec_command('cat /etc/os-release')
-            os_info = stdout.read().decode()
-            system_info['os_version'] = os_info
+        # Get init system
+        stdin, stdout, stderr = ssh_client.exec_command('ps -p 1')
+        init_output = stdout.read().decode()
+        if 'systemd' in init_output:
+            system_info['init_system'] = 'systemd'
+        elif 'init' in init_output:
+            system_info['init_system'] = 'sysvinit'
+        else:
+            system_info['init_system'] = 'unknown'
 
-            # Get CPU info
-            stdin, stdout, stderr = ssh_client.exec_command('lscpu')
-            cpu_info = stdout.read().decode()
-            system_info['cpu_info'] = cpu_info
+        # Get kernel version
+        stdin, stdout, stderr = ssh_client.exec_command('uname -r')
+        system_info['kernel_version'] = stdout.read().decode().strip()
 
-            # Get memory info
-            stdin, stdout, stderr = ssh_client.exec_command('free -h')
-            memory_info = stdout.read().decode()
-            system_info['memory_total'] = memory_info
+        # Get available commands
+        stdin, stdout, stderr = ssh_client.exec_command('compgen -c | sort -u')
+        available_commands = stdout.read().decode().split('\n')
+        system_info['available_commands'] = [cmd for cmd in available_commands if cmd]
 
-            # Get disk devices
-            stdin, stdout, stderr = ssh_client.exec_command('lsblk')
-            disk_info = stdout.read().decode()
-            system_info['disk_devices'] = disk_info
+        return system_info
+    except Exception as e:
+        st.error(f"Error gathering system information: {str(e)}")
+        return {}
 
-            # Determine package manager
-            package_managers = {
-                'apt': 'apt-get -v',
-                'dnf': 'dnf --version',
-                'yum': 'yum --version',
-                'pacman': 'pacman --version',
-                'zypper': 'zypper --version'
-            }
-            
-            for pm, cmd in package_managers.items():
-                stdin, stdout, stderr = ssh_client.exec_command(cmd)
-                if stdout.read():
-                    system_info['package_manager'] = pm
-                    break
+def establish_ssh_connection(host, username, key_data):
+    try:
+        key_path = "temp_key.pem"
+        with open(key_path, "wb") as f:
+            f.write(key_data)
+        os.chmod(key_path, 0o600)
 
-            # Get init system
-            stdin, stdout, stderr = ssh_client.exec_command('ps -p 1')
-            init_output = stdout.read().decode()
-            if 'systemd' in init_output:
-                system_info['init_system'] = 'systemd'
-            elif 'init' in init_output:
-                system_info['init_system'] = 'sysvinit'
-            else:
-                system_info['init_system'] = 'unknown'
-
-            # Get kernel version
-            stdin, stdout, stderr = ssh_client.exec_command('uname -r')
-            system_info['kernel_version'] = stdout.read().decode().strip()
-
-            # Get available commands
-            stdin, stdout, stderr = ssh_client.exec_command('compgen -c | sort -u')
-            available_commands = stdout.read().decode().split('\n')
-            system_info['available_commands'] = [cmd for cmd in available_commands if cmd]
-
-            return system_info
-        except Exception as e:
-            st.error(f"Error gathering system information: {str(e)}")
-            return {}
-
-    def establish_ssh_connection(host, username, key_data):
-        try:
-            key_path = "temp_key.pem"
-            with open(key_path, "wb") as f:
-                f.write(key_data)
-            os.chmod(key_path, 0o600)
-
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            
-            private_key = paramiko.RSAKey(filename=key_path)
-            ssh.connect(hostname=host, username=username, pkey=private_key)
-            
-            # Get comprehensive system information
-            system_info = get_system_info(ssh)
-            st.session_state.system_info = system_info
-            
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
+        private_key = paramiko.RSAKey(filename=key_path)
+        ssh.connect(hostname=host, username=username, pkey=private_key)
+        
+        # Get comprehensive system information
+        system_info = get_system_info(ssh)
+        st.session_state.system_info = system_info
+        
+        os.remove(key_path)
+        return ssh
+    except Exception as e:
+        if os.path.exists(key_path):
             os.remove(key_path)
-            return ssh
-        except Exception as e:
-            if os.path.exists(key_path):
-                os.remove(key_path)
-            raise e
+        raise e
 
-    def create_system_context():
-        """Create a detailed system context for OpenAI"""
-        info = st.session_state.system_info
-        
-        # Extract relevant CPU information
-        cpu_details = "Unknown CPU"
-        for line in info['cpu_info'].split('\n'):
-            if "Model name" in line:
-                cpu_details = line.split(':')[1].strip()
-                break
+def create_system_context():
+    """Create a detailed system context for OpenAI"""
+    info = st.session_state.system_info
+    
+    # Extract relevant CPU information
+    cpu_details = "Unknown CPU"
+    for line in info['cpu_info'].split('\n'):
+        if "Model name" in line:
+            cpu_details = line.split(':')[1].strip()
+            break
 
-        # Extract memory information
-        memory_details = "Unknown memory"
-        for line in info['memory_total'].split('\n'):
-            if "Mem:" in line:
-                memory_details = line.split()[1]
-                break
+    # Extract memory information
+    memory_details = "Unknown memory"
+    for line in info['memory_total'].split('\n'):
+        if "Mem:" in line:
+            memory_details = line.split()[1]
+            break
 
-        # Parse OS information
-        os_details = "Unknown OS"
-        for line in info['os_version'].split('\n'):
-            if "PRETTY_NAME" in line:
-                os_details = line.split('=')[1].strip().strip('"')
-                break
+    # Parse OS information
+    os_details = "Unknown OS"
+    for line in info['os_version'].split('\n'):
+        if "PRETTY_NAME" in line:
+            os_details = line.split('=')[1].strip().strip('"')
+            break
 
-        context = f"""You are a Linux system administrator managing a system with the following specifications:
+    context = f"""You are a Linux system administrator managing a system with the following specifications:
 
 OS: {os_details}
 Kernel: {info['kernel_version']}
@@ -176,37 +176,37 @@ Convert user requests into appropriate Linux commands that:
 
 Respond with ONLY the command, no explanations."""
 
-        return context
+    return context
 
-    # [Previous helper functions remain the same]
+# [Previous helper functions remain the same]
 
-    if st.session_state.connected:
-        # Display system information in sidebar
-        with st.sidebar:
-            st.subheader("System Information")
-            st.write(f"OS: {st.session_state.system_info.get('os_version', '').split('\n')[0]}")
-            st.write(f"Kernel: {st.session_state.system_info.get('kernel_version', '')}")
-            st.write(f"Package Manager: {st.session_state.system_info.get('package_manager', '')}")
-            st.write("Network Interfaces:")
-            for interface in st.session_state.system_info.get('network_interfaces', []):
-                st.write(f"- {interface}")
+if st.session_state.connected:
+    # Display system information in sidebar
+    with st.sidebar:
+        st.subheader("System Information")
+        st.write(f"OS: {st.session_state.system_info.get('os_version', '').split('\n')[0]}")
+        st.write(f"Kernel: {st.session_state.system_info.get('kernel_version', '')}")
+        st.write(f"Package Manager: {st.session_state.system_info.get('package_manager', '')}")
+        st.write("Network Interfaces:")
+        for interface in st.session_state.system_info.get('network_interfaces', []):
+            st.write(f"- {interface}")
 
-        # Update the OpenAI interaction to use system context
-        if prompt := st.chat_input("What would you like to do?"):
-            try:
-                system_context = create_system_context()
-                
-                response = openai.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": system_context},
-                        {"role": "user", "content": prompt}
-                    ]
-                )
-                
-                command = response.choices[0].message.content.strip()
-                
-                # Execute and display results as before
-                # [Rest of the execution code remains the same]
+    # Update the OpenAI interaction to use system context
+    if prompt := st.chat_input("What would you like to do?"):
+        try:
+            system_context = create_system_context()
+            
+            response = openai.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": system_context},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            
+            command = response.choices[0].message.content.strip()
+            
+            # Execute and display results as before
+            # [Rest of the execution code remains the same]
 
 # [Rest of the application code remains the same]
