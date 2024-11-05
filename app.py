@@ -22,17 +22,6 @@ def establish_ssh_connection(host, username, key_data):
         private_key = paramiko.RSAKey(filename=key_path)
         ssh.connect(hostname=host, username=username, pkey=private_key)
         
-        # Fetch network interfaces upon connection
-        stdin, stdout, stderr = ssh.exec_command('ip link show')
-        interfaces_output = stdout.read().decode()
-        
-        # Store interfaces in session state for reuse
-        st.session_state.interfaces = [
-            line.split(':')[1].strip() 
-            for line in interfaces_output.split('\n')
-            if ':' in line and '@' not in line
-        ]
-        
         os.remove(key_path)
         return ssh
     except Exception as e:
@@ -82,12 +71,30 @@ def execute_ssh_command(command):
     try:
         st.session_state.last_activity = datetime.now()
         
-        # Replace 'eth0' with a relevant interface if certain commands are detected
         if any(cmd in command.lower() for cmd in ['tcpdump', 'wireshark', 'tshark', 'iftop']):
-            if 'interfaces' in st.session_state and st.session_state.interfaces:
-                primary_interface = st.session_state.interfaces[0]  # Use the first available interface
-                command = command.replace('eth0', primary_interface)
-
+            stdin, stdout, stderr = st.session_state.ssh_client.exec_command('ip link show')
+            interfaces_output = stdout.read().decode()
+            
+            interfaces = []
+            for line in interfaces_output.split('\n'):
+                if ':' in line and '@' not in line:
+                    interface = line.split(':')[1].strip()
+                    interfaces.append(interface)
+            
+            if not interfaces:
+                return "No network interfaces found"
+            
+            for interface in interfaces:
+                if 'eth0' in command:
+                    command = command.replace('eth0', interface)
+                    break
+                elif 'enx' in interface.lower() or 'eth' in interface.lower():
+                    command = command.replace('eth0', interface)
+                    break
+                else:
+                    command = command.replace('eth0', interfaces[0])
+                    break
+        
         stdin, stdout, stderr = st.session_state.ssh_client.exec_command(command)
         output = stdout.read().decode()
         error = stderr.read().decode()
@@ -254,3 +261,26 @@ if st.session_state.connected:
                 ]
             )
             
+            command = response.choices[0].message.content.strip()
+            output = execute_ssh_command(command)
+            st.session_state.last_activity = datetime.now()
+            
+            visualization = process_and_visualize_command(command, output)
+            response_content = f"Command executed: `{command}`\n\nOutput:\n```\n{output}\n```"
+            
+            assistant_message = {
+                "role": "assistant",
+                "content": response_content
+            }
+            if visualization:
+                assistant_message["visualization"] = visualization
+                
+            st.session_state.messages.append(assistant_message)
+            
+            with st.chat_message("assistant"):
+                st.markdown(response_content)
+                if visualization:
+                    st.plotly_chart(visualization, key=f"chart_{len(st.session_state.messages)-1}")
+
+        except Exception as e:
+            st.error(f"Error processing request: {str(e)}")
